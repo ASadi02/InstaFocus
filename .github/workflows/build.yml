@@ -23,7 +23,6 @@ jobs:
       - name: Generate Android Project Structure
         run: |
           mkdir -p app/src/main/java/com/instafocus/app
-          mkdir -p app/src/main/assets
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/res/drawable
           mkdir -p app/src/main/res/mipmap-anydpi-v26
@@ -106,12 +105,14 @@ jobs:
               implementation("androidx.core:core-ktx:1.15.0")
               implementation("androidx.appcompat:appcompat:1.7.0")
               implementation("androidx.activity:activity-ktx:1.9.3")
-              implementation("androidx.webkit:webkit:1.12.1")
           }
           EOF
 
           cat << 'EOF' > app/proguard-rules.pro
           # ProGuard rules
+          -keepclassmembers class * {
+              @android.webkit.JavascriptInterface <methods>;
+          }
           EOF
 
           cat << 'EOF' > app/src/main/res/drawable/ic_launcher_background.xml
@@ -224,8 +225,8 @@ jobs:
 
           import android.annotation.SuppressLint
           import android.app.Activity
-          import android.content.Context
           import android.content.Intent
+          import android.content.pm.ApplicationInfo
           import android.graphics.Bitmap
           import android.graphics.Color
           import android.graphics.drawable.GradientDrawable
@@ -233,12 +234,12 @@ jobs:
           import android.os.Bundle
           import android.os.Handler
           import android.os.Looper
+          import android.os.SystemClock
           import android.view.Gravity
-          import android.view.MotionEvent
-          import android.view.ViewConfiguration
           import android.view.View
           import android.view.ViewGroup
           import android.webkit.CookieManager
+          import android.webkit.JavascriptInterface
           import android.webkit.ValueCallback
           import android.webkit.WebChromeClient
           import android.webkit.WebResourceRequest
@@ -253,19 +254,34 @@ jobs:
           import androidx.core.view.ViewCompat
           import androidx.core.view.WindowCompat
           import androidx.core.view.WindowInsetsCompat
-          import androidx.webkit.WebViewCompat
-          import androidx.webkit.WebViewFeature
-          import kotlin.math.abs
 
           class MainActivity : AppCompatActivity() {
 
-              private lateinit var webView: ReelLockWebView
-              private lateinit var reelLockScript: String
-              private var injectReelLockAtDocumentStart = false
+              private lateinit var webView: WebView
               private lateinit var timerBar: View
               private lateinit var timerBanner: TextView
 
               private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+              // JS -> native kopru: Reels oynatici acik mi? (URL'den bagimsiz)
+              @Volatile private var reelLocked = false
+              @Volatile private var reelLockStamp = 0L
+
+              inner class FocusBridge {
+                  @JavascriptInterface
+                  fun setReelLock(locked: Boolean) {
+                      reelLocked = locked
+                      reelLockStamp = SystemClock.uptimeMillis()
+                  }
+              }
+
+              // JS 1.5 sn'den uzun sure haber vermezse (sayfa degisti/coktu) kilit kendiliginden duser
+              private fun isReelLockActive(): Boolean {
+                  val jsSays = reelLocked && SystemClock.uptimeMillis() - reelLockStamp < 1500L
+                  val url = webView.url ?: ""
+                  val urlSaysReel = url.contains("/reel/") || url.contains("/reels/")
+                  return jsSays || urlSaysReel
+              }
 
               private val timerHandler = Handler(Looper.getMainLooper())
               private var activeSeconds = 0
@@ -301,9 +317,6 @@ jobs:
 
               companion object {
                   private const val HOME_URL = "https://www.instagram.com/?variant=following"
-                  private val INSTAGRAM_ORIGINS = setOf(
-                      "https://instagram.com", "https://www.instagram.com", "https://m.instagram.com"
-                  )
               }
 
               @SuppressLint("SetJavaScriptEnabled")
@@ -328,7 +341,7 @@ jobs:
                       WindowInsetsCompat.CONSUMED
                   }
 
-                  webView = ReelLockWebView(this).apply {
+                  webView = WebView(this).apply {
                       layoutParams = FrameLayout.LayoutParams(
                           ViewGroup.LayoutParams.MATCH_PARENT,
                           ViewGroup.LayoutParams.MATCH_PARENT
@@ -371,8 +384,53 @@ jobs:
                   }
 
                   configureSecurityAndSession()
-                  installReelLock()
                   configureClients()
+                  // Native Reels dikey kaydirma kilidi
+                  var startX = 0f
+                  var startY = 0f
+                  var isBlockingVertical = false
+                  val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+
+                  webView.setOnTouchListener { v, event ->
+                      if (!isReelLockActive()) {
+                          isBlockingVertical = false
+                          return@setOnTouchListener false
+                      }
+
+                      when (event.actionMasked) {
+                          android.view.MotionEvent.ACTION_DOWN -> {
+                              startX = event.x
+                              startY = event.y
+                              isBlockingVertical = false
+                              false
+                          }
+                          android.view.MotionEvent.ACTION_MOVE -> {
+                              if (isBlockingVertical) return@setOnTouchListener true
+                              val dx = kotlin.math.abs(event.x - startX)
+                              val dy = kotlin.math.abs(event.y - startY)
+                              if (dy > touchSlop && dy >= dx * 0.6f) {
+                                  isBlockingVertical = true
+                                  val cancel = android.view.MotionEvent.obtain(event).apply {
+                                      action = android.view.MotionEvent.ACTION_CANCEL
+                                  }
+                                  v.onTouchEvent(cancel)
+                                  cancel.recycle()
+                                  true
+                              } else {
+                                  false
+                              }
+                          }
+                          android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                              if (isBlockingVertical) {
+                                  isBlockingVertical = false
+                                  true
+                              } else {
+                                  false
+                              }
+                          }
+                          else -> false
+                      }
+                  }
 
                   rootContainer.addView(webView)
                   rootContainer.addView(timerBar)
@@ -422,6 +480,11 @@ jobs:
                   cookieManager.setAcceptCookie(true)
                   cookieManager.setAcceptThirdPartyCookies(webView, true)
 
+                  webView.addJavascriptInterface(FocusBridge(), "InstaFocusBridge")
+                  if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                      WebView.setWebContentsDebuggingEnabled(true)
+                  }
+
                   webView.settings.apply {
                       javaScriptEnabled = true
                       domStorageEnabled = true
@@ -438,27 +501,6 @@ jobs:
                       setSupportZoom(false)
                       mediaPlaybackRequiresUserGesture = false
                       cacheMode = WebSettings.LOAD_DEFAULT
-                  }
-              }
-
-              private fun installReelLock() {
-                  reelLockScript = assets.open("reel-lock.js").bufferedReader().use { it.readText() }
-                  if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-                      WebViewCompat.addWebMessageListener(
-                          webView, "InstaFocusReelLock", INSTAGRAM_ORIGINS
-                      ) { _, message, origin, isMainFrame, _ ->
-                          if (isMainFrame && origin.toString() in INSTAGRAM_ORIGINS) {
-                              when (message.data) {
-                                  "lock" -> webView.gestureLocked = true
-                                  "unlock" -> webView.gestureLocked = false
-                              }
-                          }
-                      }
-                  }
-                  injectReelLockAtDocumentStart =
-                      WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
-                  if (injectReelLockAtDocumentStart) {
-                      WebViewCompat.addDocumentStartJavaScript(webView, reelLockScript, INSTAGRAM_ORIGINS)
                   }
               }
 
@@ -495,25 +537,19 @@ jobs:
 
                       override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                           super.onPageStarted(view, url, favicon)
-                          webView.gestureLocked = false
+                          reelLocked = false
                           injectFocusScript(view)
                       }
 
                       override fun onPageFinished(view: WebView?, url: String?) {
                           super.onPageFinished(view, url)
-                          if (!injectReelLockAtDocumentStart) {
-                              view?.evaluateJavascript(reelLockScript, null)
-                          }
-                          view?.evaluateJavascript("window.__instafocusReelSync?.(true);", null)
                           injectFocusScript(view)
                       }
 
                       override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                           super.doUpdateVisitedHistory(view, url, isReload)
                           injectFocusScript(view)
-                          view?.evaluateJavascript(
-                              "window.__instafocusReelSync?.(); window.__instafocusSync?.();", null
-                          )
+                          view?.evaluateJavascript("window.__instafocusSync && window.__instafocusSync();", null)
                       }
                   }
 
@@ -586,66 +622,6 @@ jobs:
               }
           }
 
-          private class ReelLockWebView(context: Context) : WebView(context) {
-              private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-              private var startX = 0f
-              private var startY = 0f
-              private var touchInProgress = false
-              private var tapOnly = false
-              private var cancelPending = false
-              private var swallowing = false
-
-              var gestureLocked = false
-                  set(value) {
-                      if (value && !field && touchInProgress && !tapOnly) cancelPending = true
-                      field = value
-                  }
-
-              override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-                  val action = event.actionMasked
-                  if (action == MotionEvent.ACTION_DOWN) {
-                      startX = event.x
-                      startY = event.y
-                      touchInProgress = true
-                      tapOnly = gestureLocked
-                      cancelPending = false
-                      swallowing = false
-                      if (tapOnly) parent?.requestDisallowInterceptTouchEvent(true)
-                      return super.dispatchTouchEvent(event)
-                  }
-
-                  val terminal = action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL
-                  if (terminal) touchInProgress = false
-
-                  if (swallowing) return true
-                  if (cancelPending || tapOnly && (
-                          action == MotionEvent.ACTION_POINTER_DOWN ||
-                          (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_UP) &&
-                          maxOf(abs(event.x - startX), abs(event.y - startY)) >= touchSlop
-                      )
-                  ) {
-                      cancelPending = false
-                      swallowing = true
-                      val cancel = MotionEvent.obtain(event).apply { this.action = MotionEvent.ACTION_CANCEL }
-                      try {
-                          super.dispatchTouchEvent(cancel)
-                      } finally {
-                          cancel.recycle()
-                      }
-                      return true
-                  }
-
-                  // Deliver taps, but withhold even the first MOVE from the page.
-                  if (tapOnly && action == MotionEvent.ACTION_MOVE) return true
-                  return super.dispatchTouchEvent(event)
-              }
-
-              override fun onGenericMotionEvent(event: MotionEvent): Boolean {
-                  if (gestureLocked && event.actionMasked == MotionEvent.ACTION_SCROLL) return true
-                  return super.onGenericMotionEvent(event)
-              }
-          }
-
           private const val FOCUS_INJECTION_JS = """
           (function() {
             if (window.__instafocusInstalled) {
@@ -653,6 +629,9 @@ jobs:
               return;
             }
             window.__instafocusInstalled = true;
+
+            let lockedReelId = null;
+            let lockedReelUrl = null;
 
             // 1. Kalici CSS kurallari
             const style = document.createElement('style');
@@ -676,12 +655,156 @@ jobs:
                 display: none !important;
               }
 
+              /* Reels izlerken tum ust katmanlarda kaydirmayi ve snap hareketini kes */
+              html.instafocus-reel-lock,
+              html.instafocus-reel-lock body,
+              html.instafocus-reel-lock main,
+              html.instafocus-reel-lock section {
+                overflow-y: hidden !important;
+                overscroll-behavior: none !important;
+                scroll-snap-type: none !important;
+              }
+
+              .if-scroll-locked {
+                overflow-y: hidden !important;
+                overscroll-behavior: none !important;
+                touch-action: none !important;
+                scroll-snap-type: none !important;
+              }
             `;
             (document.head || document.documentElement).appendChild(style);
+
+            function getReelId(pathname) {
+              const m = (pathname || location.pathname).match(/^\/reels?\/([^/?#]+)/);
+              return m ? m[1] : null;
+            }
+
+            // ---- Kilit durumu: URL'den bagimsiz, DOM geometrisiyle tespit ----
+            let lockState = false;
+            let lockOffTimer = null;
+            let lastCompute = 0;
+
+            // Gorunur alanin buyuk kismini kaplayan bir <video> var mi (tam ekran oynatici)
+            function hasFullscreenPlayer() {
+              const vw = window.innerWidth;
+              const vh = window.innerHeight;
+              const vids = document.querySelectorAll('video');
+              for (const v of vids) {
+                const r = v.getBoundingClientRect();
+                const visW = Math.min(r.right, vw) - Math.max(r.left, 0);
+                const visH = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+                if (visW >= vw * 0.8 && visH >= vh * 0.75) return true;
+              }
+              return false;
+            }
+
+            function computeReelOverlay() {
+              const path = location.pathname;
+              if (getReelId(path)) return true;
+              if (path === '/' || path === '' || path.startsWith('/explore') || path.startsWith('/stories/')) return false;
+              if (hasFullscreenPlayer()) return true;
+              if (path.startsWith('/direct')) {
+                const dialogs = document.querySelectorAll('[role="dialog"]');
+                for (const d of dialogs) {
+                  if (d.querySelector('video')) return true;
+                }
+              }
+              return false;
+            }
+
+            function isReelOverlayOpen() { return lockState; }
+
+            function reportLock(on) {
+              try {
+                if (window.InstaFocusBridge) window.InstaFocusBridge.setReelLock(!!on);
+              } catch (_) {}
+            }
+
+            // Acilis hemen, kapanis 500ms gecikmeli (titreme olmasin). Kilitliyken her cagrida native'e nabiz atar.
+            function refreshLock(force) {
+              const now = Date.now();
+              if (!force && now - lastCompute < 120) {
+                if (lockState && !lockOffTimer) reportLock(true);
+                return;
+              }
+              lastCompute = now;
+              if (computeReelOverlay()) {
+                if (lockOffTimer) { clearTimeout(lockOffTimer); lockOffTimer = null; }
+                const changed = !lockState;
+                lockState = true;
+                reportLock(true);
+                if (changed) lockReelScrollContainers();
+              } else if (lockState && !lockOffTimer) {
+                lockOffTimer = setTimeout(function() {
+                  lockOffTimer = null;
+                  if (!computeReelOverlay()) {
+                    lockState = false;
+                    reportLock(false);
+                    lockReelScrollContainers();
+                  }
+                }, 500);
+              }
+            }
+
+            window.__ifState = function() {
+              return {
+                path: location.pathname,
+                lockState: lockState,
+                lockedReelId: lockedReelId,
+                fullscreenPlayer: hasFullscreenPlayer(),
+                videos: document.querySelectorAll('video').length
+              };
+            };
 
             function isLoggedIn() {
               return !document.querySelector('input[name="username"]') &&
                      (!!document.querySelector('a[href*="/direct/"]') || !!document.querySelector('nav'));
+            }
+
+            // Yorum veya paylasim cekmecesi icindeyse (video icermeyen kaydirilabilir alan) kaydirmaya izin ver
+            function isInsideCommentOrShareSheet(target) {
+              let el = target;
+              while (el && el !== document.body) {
+                const st = window.getComputedStyle(el);
+                const scrollable = (st.overflowY === 'auto' || st.overflowY === 'scroll') &&
+                                   (el.scrollHeight > el.clientHeight + 20);
+                if (scrollable && !el.querySelector('video')) {
+                  return true;
+                }
+                el = el.parentElement;
+              }
+              return false;
+            }
+
+            // Video oynaticisinin asil kaydirilabilir kapsayicisini bulup kilitle
+            function lockReelScrollContainers() {
+              const active = isReelOverlayOpen();
+              document.documentElement.classList.toggle('instafocus-reel-lock', active);
+
+              if (!active) {
+                document.querySelectorAll('.if-scroll-locked').forEach(el => {
+                  el.classList.remove('if-scroll-locked');
+                });
+                return;
+              }
+
+              document.querySelectorAll('video').forEach(v => {
+                let p = v.parentElement;
+                let depth = 0;
+                while (p && p !== document.documentElement && depth < 14) {
+                  const st = window.getComputedStyle(p);
+                  if (
+                    st.overflowY === 'auto' ||
+                    st.overflowY === 'scroll' ||
+                    st.overflowY === 'overlay' ||
+                    (st.scrollSnapType && st.scrollSnapType !== 'none')
+                  ) {
+                    p.classList.add('if-scroll-locked');
+                  }
+                  p = p.parentElement;
+                  depth++;
+                }
+              });
             }
 
             function hideReelsNavWrappers() {
@@ -760,12 +883,72 @@ jobs:
               }
             }
 
+            // 2. Dokunma ve tekerlek hareketi kilidi
+            let touchStartY = 0;
+            let touchStartX = 0;
+
+            window.addEventListener('touchstart', function(e) {
+              refreshLock(true);
+              if (!isReelOverlayOpen()) return;
+              if (e.touches && e.touches.length > 0) {
+                touchStartY = e.touches[0].clientY;
+                touchStartX = e.touches[0].clientX;
+              }
+            }, { passive: true, capture: true });
+
+            window.addEventListener('touchmove', function(e) {
+              if (!isReelOverlayOpen()) return;
+              if (isInsideCommentOrShareSheet(e.target)) return;
+              if (e.touches && e.touches.length > 0) {
+                const dy = Math.abs(e.touches[0].clientY - touchStartY);
+                const dx = Math.abs(e.touches[0].clientX - touchStartX);
+                if (dy > 4 && dy >= dx) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }
+            }, { passive: false, capture: true });
+
+            window.addEventListener('wheel', function(e) {
+              if (!isReelOverlayOpen()) return;
+              if (isInsideCommentOrShareSheet(e.target)) return;
+              e.preventDefault();
+              e.stopPropagation();
+            }, { passive: false, capture: true });
+
+            window.addEventListener('keydown', function(e) {
+              if (!isReelOverlayOpen()) return;
+              const t = e.target;
+              if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+              if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'j', 'k', 'J', 'K'].indexOf(e.key) !== -1) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }, true);
             window.__instafocusSync = function() {
               const path = location.pathname;
 
               if (path === '/reels' || path === '/reels/') {
+                lockedReelId = null;
+                lockedReelUrl = null;
                 location.replace('https://www.instagram.com/?variant=following');
                 return;
+              }
+
+              const currentReelId = getReelId(path);
+              if (currentReelId) {
+                if (!lockedReelId) {
+                  lockedReelId = currentReelId;
+                  lockedReelUrl = location.href;
+                } else if (lockedReelId !== currentReelId) {
+                  // Baska bir Reels'e gecis yapilmaya calisilirsa ilk videoda tut
+                  location.replace(lockedReelUrl);
+                  return;
+                }
+              } else {
+                // DM'ye veya baska sayfaya donulunce kilidi sifirla
+                lockedReelId = null;
+                lockedReelUrl = null;
               }
 
               if (path === '/' && !location.search.includes('variant=following') && isLoggedIn()) {
@@ -775,21 +958,66 @@ jobs:
 
               document.documentElement.classList.toggle('instafocus-explore', path.startsWith('/explore'));
 
+              refreshLock(true);
+              lockReelScrollContainers();
               hideReelsNavWrappers();
               cleanFeedAndBanners();
             };
 
-            for (const method of ['pushState', 'replaceState']) {
-              const original = history[method];
-              history[method] = function() {
-                const result = original.apply(this, arguments);
-                setTimeout(window.__instafocusSync, 30);
-                return result;
-              };
+            // SPA gecislerini yakala ve baska Reels'e gecisi kokten engelle
+            function shouldBlockNav(url) {
+              if (!url || !lockState) return false;
+              try {
+                const nextId = getReelId(new URL(url, location.origin).pathname);
+                if (!nextId) return false;
+                const cur = lockedReelId || getReelId(location.pathname);
+                return cur ? nextId !== cur : true;
+              } catch (_) {
+                return false;
+              }
             }
+
+            const origPush = history.pushState;
+            history.pushState = function(state, title, url) {
+              if (shouldBlockNav(url)) return;
+              origPush.apply(this, arguments);
+              setTimeout(window.__instafocusSync, 30);
+            };
+
+            const origReplace = history.replaceState;
+            history.replaceState = function(state, title, url) {
+              if (shouldBlockNav(url)) return;
+              origReplace.apply(this, arguments);
+              setTimeout(window.__instafocusSync, 30);
+            };
+
             window.addEventListener('popstate', () => setTimeout(window.__instafocusSync, 30));
 
+            // Ag katmani (en iyi caba): kilit aktifken sonraki Reels sayfalama isteklerini bos cevapla.
+            // Kaliplar tahmindir; chrome://inspect konsolunda [IF-NET] loglarina bakip ayarla.
+            const NET_GUARD = true;
+            function shouldBlockNet(url, body) {
+              if (!NET_GUARD || !lockState) return false;
+              const s = String(url || '') + ' ' + (typeof body === 'string' ? body : '');
+              const hit = /(clips|reels?)/i.test(s) && /(pagination|paginate|discover|next_page|max_id)/i.test(s);
+              if (hit) console.log('[IF-NET] blocked: ' + s.slice(0, 200));
+              return hit;
+            }
+            const origFetch = window.fetch;
+            window.fetch = function(input, init) {
+              try {
+                const u = (typeof input === 'string') ? input : (input && input.url);
+                const b = init && init.body;
+                if (shouldBlockNet(u, b)) {
+                  return Promise.resolve(new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }));
+                }
+              } catch (_) {}
+              return origFetch.apply(this, arguments);
+            };
+
             const observer = new MutationObserver(() => {
+              refreshLock(false);
+              lockReelScrollContainers();
               hideReelsNavWrappers();
               cleanFeedAndBanners();
             });
@@ -803,201 +1031,9 @@ jobs:
               }
             }
             startObserver();
+            setInterval(function() { refreshLock(true); }, 300);
           })();
           """
-          EOF
-
-          cat << 'EOF' > app/src/main/assets/reel-lock.js
-          (function () {
-            const origins = ['https://instagram.com', 'https://www.instagram.com', 'https://m.instagram.com'];
-            if (window !== window.top || !origins.includes(location.origin)) return;
-            if (window.__instafocusReelSync) {
-              window.__instafocusReelSync();
-              return;
-            }
-
-            const reelId = path => /^\/reels?\/([^/]+)(?:\/|$)/.exec(path)?.[1];
-            const isThread = path => /^\/direct\/t\/[^/]+/.test(path);
-            const isPost = path => /^\/p\/[^/]+/.test(path);
-            const dialogSelector = 'dialog[open], [role="dialog"], [aria-modal="true"]';
-            const lockClass = 'instafocus-player-locked';
-            const scrollerClass = 'instafocus-player-scroller';
-            let lockedScrollers = new Set();
-            let active = null;
-            let lastPath = location.pathname;
-            let postFromThread = false;
-            let scheduled = false;
-            let style;
-
-            function playerBox(el, width, height) {
-              if (!el.isConnected) return null;
-              if (el.checkVisibility && !el.checkVisibility({
-                checkOpacity: true, checkVisibilityCSS: true
-              })) return null;
-              const css = getComputedStyle(el);
-              if (css.visibility !== 'visible' || css.opacity === '0') return null;
-              const rect = el.getBoundingClientRect();
-              const left = Math.max(0, rect.left);
-              const right = Math.min(width, rect.right);
-              const top = Math.max(0, rect.top);
-              const bottom = Math.min(height, rect.bottom);
-              if (right <= left || bottom <= top) return null;
-              return { left, right, top, bottom, w: (right - left) / width, h: (bottom - top) / height };
-            }
-
-            function overlayRoot(video, width, height) {
-              const dialog = video.closest(dialogSelector);
-              if (dialog) return dialog;
-              for (let node = video; node && node !== document.body; node = node.parentElement) {
-                const position = getComputedStyle(node).position;
-                if (position !== 'fixed' && position !== 'absolute') continue;
-                const box = playerBox(node, width, height);
-                if (box && box.w >= 0.92 && box.h >= 0.90) return node;
-              }
-              return null;
-            }
-
-            function isInFront(video, overlay, box) {
-              const x = (box.left + box.right) / 2;
-              return [0.27, 0.5, 0.73].some(fraction => {
-                const top = document.elementFromPoint(x, box.top + (box.bottom - box.top) * fraction);
-                if (!top) return false;
-                if (overlay) return overlay.contains(top);
-                if (top === video || top.contains(video)) return true;
-                const stack = document.elementsFromPoint(x, box.top + (box.bottom - box.top) * fraction);
-                // A control may sit above the media, inside its immediate player wrapper.
-                return video.parentElement?.contains(top) && stack.includes(video);
-              });
-            }
-
-            function findPlayer(path) {
-              const id = reelId(path);
-              if (!id && !isThread(path) && !isPost(path)) return null;
-              const width = document.documentElement?.clientWidth || innerWidth;
-              const height = document.documentElement?.clientHeight || innerHeight;
-              for (const video of document.querySelectorAll('video')) {
-                const box = playerBox(video, width, height);
-                if (!box || box.top > height * 0.36 || box.bottom < height * 0.64) continue;
-                const overlay = overlayRoot(video, width, height);
-                if (id && isInFront(video, overlay, box)) return { id, video };
-                const modalVideo = overlay && (box.w >= 0.48 && box.h >= 0.36 || box.w >= 0.25 && box.h >= 0.63);
-                const largeVideo = (isThread(path) || postFromThread) && box.w >= 0.71 && box.h >= 0.62;
-                if (!modalVideo && !largeVideo) continue;
-                // Keep the same player locked when its own comments cover the video.
-                if (active?.video === video || isInFront(video, overlay, box)) return { id, video };
-              }
-              return id ? { id } : null;
-            }
-
-            function updateScrollers(video) {
-              const next = new Set();
-              for (let node = video?.parentElement; node; node = node.parentElement) {
-                const overflow = getComputedStyle(node).overflowY;
-                if (node === document.scrollingElement || lockedScrollers.has(node) ||
-                    overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay') {
-                  next.add(node);
-                  if (!node.classList.contains(scrollerClass)) node.classList.add(scrollerClass);
-                }
-              }
-              for (const node of lockedScrollers) {
-                if (!next.has(node)) node.classList.remove(scrollerClass);
-              }
-              lockedScrollers = next;
-            }
-
-            function sync(forceMessage) {
-              const path = location.pathname;
-              if (lastPath !== path) {
-                postFromThread = isThread(lastPath) && isPost(path);
-                lastPath = path;
-              }
-              const wasLocked = Boolean(active);
-              active = findPlayer(path);
-              const locked = Boolean(active);
-              const root = document.documentElement;
-              if (root) {
-                if (!style && locked) {
-                  style = document.createElement('style');
-                  style.textContent = 'html.' + lockClass + ', html.' + lockClass +
-                    ' * { touch-action: none !important; overscroll-behavior: none !important; ' +
-                    'scroll-snap-type: none !important; } html.' + lockClass +
-                    ' .' + scrollerClass + ', html.' + lockClass + '.' + scrollerClass +
-                    ' { overflow-y: hidden !important; }';
-                  (document.head || root).appendChild(style);
-                }
-                root.classList.toggle(lockClass, locked);
-              }
-              updateScrollers(active?.video);
-              if (locked !== wasLocked || forceMessage === true) {
-                window.InstaFocusReelLock?.postMessage(locked ? 'lock' : 'unlock');
-              }
-            }
-            window.__instafocusReelSync = sync;
-
-            function scheduleSync() {
-              if (scheduled) return;
-              scheduled = true;
-              requestAnimationFrame(() => {
-                scheduled = false;
-                sync();
-              });
-            }
-
-            function stop(event) {
-              if (event.cancelable) event.preventDefault();
-              event.stopImmediatePropagation();
-            }
-
-            // Recheck synchronously at gesture start to cover newly opened overlays before
-            // the next animation frame and before the native bridge message is delivered.
-            for (const type of ['pointerdown', 'touchstart']) {
-              window.addEventListener(type, sync, { capture: true, passive: true });
-            }
-            for (const type of ['pointermove', 'touchmove', 'wheel']) {
-              window.addEventListener(type, event => {
-                if (type === 'wheel' || !active) sync();
-                if (active) stop(event);
-              }, { capture: true, passive: false });
-            }
-
-            window.addEventListener('keydown', event => {
-              if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) {
-                if (event.key === ' ' && event.target instanceof Element &&
-                    event.target.closest('button, [role="button"], input, textarea, [contenteditable]')) return;
-                sync();
-                if (active) stop(event);
-              }
-            }, true);
-
-            for (const method of ['pushState', 'replaceState']) {
-              const original = history[method];
-              history[method] = function (state, title, url) {
-                if (active?.id && url != null) {
-                  let next;
-                  try { next = new URL(url, location.href); } catch (_) {}
-                  if (next?.origin === location.origin) {
-                    const id = reelId(next.pathname);
-                    if (id && id !== active.id) return;
-                  }
-                }
-                const result = original.apply(this, arguments);
-                sync();
-                return result;
-              };
-            }
-
-            for (const type of ['popstate', 'pageshow', 'resize', 'fullscreenchange', 'loadedmetadata',
-                                'transitionend', 'animationend']) {
-              window.addEventListener(type, scheduleSync, true);
-            }
-            new MutationObserver(scheduleSync).observe(document, {
-              childList: true,
-              subtree: true,
-              attributes: true,
-              attributeFilter: ['class', 'style', 'hidden', 'open', 'role', 'aria-modal', 'src']
-            });
-            sync();
-          })();
           EOF
 
       - name: Build Debug APK
