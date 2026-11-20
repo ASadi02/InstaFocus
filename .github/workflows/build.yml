@@ -1,4 +1,4 @@
-name: Build InstaFocus APK
+name: Build Instagram Focus APK
 
 on:
   push:
@@ -25,6 +25,7 @@ jobs:
           mkdir -p app/src/main/java/com/instafocus/app
           mkdir -p app/src/main/res/values
           mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/mipmap-anydpi-v26
 
           cat << 'EOF' > gradle.properties
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
@@ -48,7 +49,7 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "InstaFocus"
+          rootProject.name = "Instagram"
           include(":app")
           EOF
 
@@ -73,8 +74,8 @@ jobs:
                   applicationId = "com.instafocus.app"
                   minSdk = 26
                   targetSdk = 35
-                  versionCode = 1
-                  versionName = "1.0"
+                  versionCode = 2
+                  versionName = "1.1"
               }
 
               buildTypes {
@@ -111,29 +112,67 @@ jobs:
           # ProGuard rules
           EOF
 
-          cat << 'EOF' > app/src/main/res/drawable/ic_launcher.xml
+          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_background.xml
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:aapt="http://schemas.android.com/aapt"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:pathData="M0,0h108v108h-108z">
+                  <aapt:attr name="android:fillColor">
+                      <gradient
+                          android:type="radial"
+                          android:centerX="28"
+                          android:centerY="102"
+                          android:gradientRadius="122">
+                          <item android:offset="0.0" android:color="#FFFDF497" />
+                          <item android:offset="0.16" android:color="#FFFDF497" />
+                          <item android:offset="0.42" android:color="#FFFD5949" />
+                          <item android:offset="0.68" android:color="#FFD6249F" />
+                          <item android:offset="1.0" android:color="#FF285AEB" />
+                      </gradient>
+                  </aapt:attr>
+              </path>
+          </vector>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/drawable/ic_launcher_foreground.xml
           <vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="108dp"
               android:height="108dp"
               android:viewportWidth="108"
               android:viewportHeight="108">
               <path
-                  android:fillColor="#121212"
-                  android:pathData="M0,0h108v108h-108z" />
+                  android:fillColor="#00000000"
+                  android:strokeColor="#FFFFFF"
+                  android:strokeWidth="5.2"
+                  android:pathData="M42,28 L66,28 A14,14 0 0 1 80,42 L80,66 A14,14 0 0 1 66,80 L42,80 A14,14 0 0 1 28,66 L28,42 A14,14 0 0 1 42,28 Z" />
               <path
                   android:fillColor="#00000000"
                   android:strokeColor="#FFFFFF"
-                  android:strokeWidth="6"
-                  android:pathData="M34,26h40c4.4,0 8,3.6 8,8v40c0,4.4 -3.6,8 -8,8h-40c-4.4,0 -8,-3.6 -8,-8v-40c0,-4.4 3.6,-8 8,-8z" />
+                  android:strokeWidth="5.2"
+                  android:pathData="M54,41.5 A12.5,12.5 0 1 0 54,66.5 A12.5,12.5 0 1 0 54,41.5 Z" />
               <path
-                  android:fillColor="#00000000"
-                  android:strokeColor="#FFFFFF"
-                  android:strokeWidth="6"
-                  android:pathData="M54,41a13,13 0 1,0 0,26a13,13 0 1,0 0,-26z" />
-              <path
-                  android:fillColor="#FF5252"
-                  android:pathData="M71,37a3.5,3.5 0 1,0 0,7a3.5,3.5 0 1,0 0,-7z" />
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M68.5,36.3 A3.2,3.2 0 1 0 68.5,42.7 A3.2,3.2 0 1 0 68.5,36.3 Z" />
           </vector>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
           EOF
 
           cat << 'EOF' > app/src/main/res/values/themes.xml
@@ -156,8 +195,9 @@ jobs:
               <application
                   android:allowBackup="false"
                   android:hardwareAccelerated="true"
-                  android:icon="@drawable/ic_launcher"
-                  android:label="InstaFocus"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:label="Instagram"
                   android:supportsRtl="true"
                   android:theme="@style/Theme.InstaFocus"
                   android:usesCleartextTraffic="false">
@@ -217,7 +257,6 @@ jobs:
 
               private var filePathCallback: ValueCallback<Array<Uri>>? = null
 
-              // 15 dakikalik farkindalik sayaci (saniye cinsinden)
               private val timerHandler = Handler(Looper.getMainLooper())
               private var activeSeconds = 0
               private val reminderIntervalSeconds = 15 * 60
@@ -284,7 +323,6 @@ jobs:
                       setBackgroundColor(Color.BLACK)
                   }
 
-                  // Ust kenar 2dp zaman ilerleme cubugu
                   val barHeightPx = (2 * resources.displayMetrics.density).toInt().coerceAtLeast(2)
                   timerBar = View(this).apply {
                       layoutParams = FrameLayout.LayoutParams(
@@ -297,7 +335,6 @@ jobs:
                       scaleX = 0f
                   }
 
-                  // 15. dakikada beliren sessiz uyari bandi
                   val padH = (16 * resources.displayMetrics.density).toInt()
                   val padV = (8 * resources.displayMetrics.density).toInt()
                   val topMargin = (14 * resources.displayMetrics.density).toInt()
@@ -376,12 +413,10 @@ jobs:
                       domStorageEnabled = true
                       databaseEnabled = true
 
-                      // Siber guvenlik sikilastirmalari
                       allowFileAccess = false
                       allowContentAccess = false
                       mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
 
-                      // Mobil Chrome uyumlulugu (wv etiketini temizle)
                       userAgentString = userAgentString.replace("; wv", "")
 
                       useWideViewPort = true
@@ -403,14 +438,12 @@ jobs:
                           val host = uri.host?.lowercase() ?: return false
                           val path = uri.path ?: ""
 
-                          // "Uygulamada Ac" intent:// yonlendirmelerini engelle
                           if (uri.scheme == "intent" || uri.scheme == "instagram") {
                               return true
                           }
 
                           val isInstagramDomain = (host == "instagram.com" || host.endsWith(".instagram.com"))
                           if (uri.scheme == "https" && isInstagramDomain) {
-                              // Reels sekmesi akisini engelle, ama tekil DM Reels (/reel/ID veya /reels/ID) iznine dokunma
                               if (path == "/reels" || path == "/reels/") {
                                   view?.loadUrl(HOME_URL)
                                   return true
@@ -418,7 +451,6 @@ jobs:
                               return false
                           }
 
-                          // Harici linkleri sistem tarayicisinda ac
                           try {
                               startActivity(Intent(Intent.ACTION_VIEW, uri))
                           } catch (_: Exception) {
@@ -520,6 +552,9 @@ jobs:
             }
             window.__instafocusInstalled = true;
 
+            let lockedReelId = null;
+            let lockedReelUrl = null;
+
             // 1. Kalici CSS kurallari
             const style = document.createElement('style');
             style.id = 'instafocus-css';
@@ -542,23 +577,90 @@ jobs:
                 display: none !important;
               }
 
-              /* Tekil DM Reels ekraninda dikey kaydirmayi kilitle */
+              /* Reels izlerken tum ust katmanlarda kaydirmayi ve snap hareketini kes */
               html.instafocus-reel-lock,
-              html.instafocus-reel-lock body {
-                overflow: hidden !important;
+              html.instafocus-reel-lock body,
+              html.instafocus-reel-lock main,
+              html.instafocus-reel-lock section {
+                overflow-y: hidden !important;
                 overscroll-behavior: none !important;
+                scroll-snap-type: none !important;
+              }
+
+              .if-scroll-locked {
+                overflow-y: hidden !important;
+                overscroll-behavior: none !important;
+                touch-action: none !important;
+                scroll-snap-type: none !important;
               }
             `;
             (document.head || document.documentElement).appendChild(style);
 
-            function isSingleReel() {
-              const p = location.pathname;
-              return /^\/reel\/[^/]+/.test(p) || /^\/reels\/[^/]+/.test(p);
+            function getReelId(pathname) {
+              const m = (pathname || location.pathname).match(/^\/reels?\/([^/?#]+)/);
+              return m ? m[1] : null;
+            }
+
+            function isReelOverlayOpen() {
+              if (getReelId(location.pathname)) return true;
+              const dialogs = document.querySelectorAll('[role="dialog"]');
+              for (const d of dialogs) {
+                if (d.querySelector('video') && location.pathname.startsWith('/direct')) {
+                  return true;
+                }
+              }
+              return false;
             }
 
             function isLoggedIn() {
               return !document.querySelector('input[name="username"]') &&
                      (!!document.querySelector('a[href*="/direct/"]') || !!document.querySelector('nav'));
+            }
+
+            // Yorum veya paylasim cekmecesi icindeyse (video icermeyen kaydirilabilir alan) kaydirmaya izin ver
+            function isInsideCommentOrShareSheet(target) {
+              let el = target;
+              while (el && el !== document.body) {
+                const st = window.getComputedStyle(el);
+                const scrollable = (st.overflowY === 'auto' || st.overflowY === 'scroll') &&
+                                   (el.scrollHeight > el.clientHeight + 20);
+                if (scrollable && !el.querySelector('video')) {
+                  return true;
+                }
+                el = el.parentElement;
+              }
+              return false;
+            }
+
+            // Video oynaticisinin asil kaydirilabilir kapsayicisini bulup kilitle
+            function lockReelScrollContainers() {
+              const active = isReelOverlayOpen();
+              document.documentElement.classList.toggle('instafocus-reel-lock', active);
+
+              if (!active) {
+                document.querySelectorAll('.if-scroll-locked').forEach(el => {
+                  el.classList.remove('if-scroll-locked');
+                });
+                return;
+              }
+
+              document.querySelectorAll('video').forEach(v => {
+                let p = v.parentElement;
+                let depth = 0;
+                while (p && p !== document.documentElement && depth < 14) {
+                  const st = window.getComputedStyle(p);
+                  if (
+                    st.overflowY === 'auto' ||
+                    st.overflowY === 'scroll' ||
+                    st.overflowY === 'overlay' ||
+                    (st.scrollSnapType && st.scrollSnapType !== 'none')
+                  ) {
+                    p.classList.add('if-scroll-locked');
+                  }
+                  p = p.parentElement;
+                  depth++;
+                }
+              });
             }
 
             function hideReelsNavWrappers() {
@@ -574,7 +676,6 @@ jobs:
             function cleanFeedAndBanners() {
               const path = location.pathname;
 
-              // "Uygulamada Ac" bannerlarini gizle
               const appKeywords = [
                 'uygulamada aç', 'uygulamayı kullan', 'uygulamayı indir',
                 'open in app', 'open app', 'use the app', 'get the instagram app'
@@ -592,7 +693,6 @@ jobs:
                 }
               });
 
-              // Ana akis temizligi: Onerilen gonderiler, Kimi takip etmeli, Tum yeni gonderileri gordun alti
               if (path === '/' || path === '') {
                 const caughtUpWords = ['tüm yeni gönderileri gördün', "you're all caught up"];
                 const suggestWords = [
@@ -631,7 +731,6 @@ jobs:
                 });
               }
 
-              // Kesfet izgarasi bos satir temizligi
               if (path.startsWith('/explore')) {
                 document.querySelectorAll('main a[href^="/p/"], main a[href^="/reel/"]').forEach(a => {
                   const row = a.closest('div[style*="flex-direction"]') || a.parentElement;
@@ -640,12 +739,12 @@ jobs:
               }
             }
 
-            // DM Reels dikey kaydirma kilidi
+            // 2. Dokunma ve tekerlek hareketi kilidi
             let touchStartY = 0;
             let touchStartX = 0;
 
             window.addEventListener('touchstart', function(e) {
-              if (!isSingleReel()) return;
+              if (!isReelOverlayOpen()) return;
               if (e.touches && e.touches.length > 0) {
                 touchStartY = e.touches[0].clientY;
                 touchStartX = e.touches[0].clientX;
@@ -653,12 +752,12 @@ jobs:
             }, { passive: true, capture: true });
 
             window.addEventListener('touchmove', function(e) {
-              if (!isSingleReel()) return;
-              if (e.target && e.target.closest && e.target.closest('[role="dialog"]')) return;
+              if (!isReelOverlayOpen()) return;
+              if (isInsideCommentOrShareSheet(e.target)) return;
               if (e.touches && e.touches.length > 0) {
                 const dy = Math.abs(e.touches[0].clientY - touchStartY);
                 const dx = Math.abs(e.touches[0].clientX - touchStartX);
-                if (dy > 8 && dy > dx) {
+                if (dy > 4 && dy >= dx) {
                   e.preventDefault();
                   e.stopPropagation();
                 }
@@ -666,8 +765,8 @@ jobs:
             }, { passive: false, capture: true });
 
             window.addEventListener('wheel', function(e) {
-              if (!isSingleReel()) return;
-              if (e.target && e.target.closest && e.target.closest('[role="dialog"]')) return;
+              if (!isReelOverlayOpen()) return;
+              if (isInsideCommentOrShareSheet(e.target)) return;
               e.preventDefault();
               e.stopPropagation();
             }, { passive: false, capture: true });
@@ -675,40 +774,76 @@ jobs:
             window.__instafocusSync = function() {
               const path = location.pathname;
 
-              // Reels sekmesine dusulurse aninda Takip Edilenler'e don
               if (path === '/reels' || path === '/reels/') {
+                lockedReelId = null;
+                lockedReelUrl = null;
                 location.replace('https://www.instagram.com/?variant=following');
                 return;
               }
 
-              // Giris yapilmissa ana sayfayi Takip Edilenler'e kilitle
+              const currentReelId = getReelId(path);
+              if (currentReelId) {
+                if (!lockedReelId) {
+                  lockedReelId = currentReelId;
+                  lockedReelUrl = location.href;
+                } else if (lockedReelId !== currentReelId) {
+                  // Baska bir Reels'e gecis yapilmaya calisilirsa ilk videoda tut
+                  location.replace(lockedReelUrl);
+                  return;
+                }
+              } else {
+                // DM'ye veya baska sayfaya donulunce kilidi sifirla
+                lockedReelId = null;
+                lockedReelUrl = null;
+              }
+
               if (path === '/' && !location.search.includes('variant=following') && isLoggedIn()) {
                 location.replace('https://www.instagram.com/?variant=following');
                 return;
               }
 
               document.documentElement.classList.toggle('instafocus-explore', path.startsWith('/explore'));
-              document.documentElement.classList.toggle('instafocus-reel-lock', isSingleReel());
 
+              lockReelScrollContainers();
               hideReelsNavWrappers();
               cleanFeedAndBanners();
             };
 
-            // SPA gecislerini yakala
+            // SPA gecislerini yakala ve ikinci Reels'e gecisi kokten engelle
             const origPush = history.pushState;
-            history.pushState = function() {
+            history.pushState = function(state, title, url) {
+              if (url && lockedReelId) {
+                try {
+                  const nextUrl = new URL(url, location.origin);
+                  const nextId = getReelId(nextUrl.pathname);
+                  if (nextId && nextId !== lockedReelId) {
+                    return;
+                  }
+                } catch (_) {}
+              }
               origPush.apply(this, arguments);
-              setTimeout(window.__instafocusSync, 50);
+              setTimeout(window.__instafocusSync, 30);
             };
-            const origReplace = history.replaceState;
-            history.replaceState = function() {
-              origReplace.apply(this, arguments);
-              setTimeout(window.__instafocusSync, 50);
-            };
-            window.addEventListener('popstate', () => setTimeout(window.__instafocusSync, 50));
 
-            // Dinamik DOM degisikliklerini izle
+            const origReplace = history.replaceState;
+            history.replaceState = function(state, title, url) {
+              if (url && lockedReelId) {
+                try {
+                  const nextUrl = new URL(url, location.origin);
+                  const nextId = getReelId(nextUrl.pathname);
+                  if (nextId && nextId !== lockedReelId) {
+                    return;
+                  }
+                } catch (_) {}
+              }
+              origReplace.apply(this, arguments);
+              setTimeout(window.__instafocusSync, 30);
+            };
+
+            window.addEventListener('popstate', () => setTimeout(window.__instafocusSync, 30));
+
             const observer = new MutationObserver(() => {
+              lockReelScrollContainers();
               hideReelsNavWrappers();
               cleanFeedAndBanners();
             });
@@ -732,5 +867,5 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: InstaFocus-APK
+          name: Instagram-Focus-APK
           path: app/build/outputs/apk/debug/app-debug.apk
