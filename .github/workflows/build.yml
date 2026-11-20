@@ -359,6 +359,54 @@ jobs:
 
                   configureSecurityAndSession()
                   configureClients()
+                  // Native Reels dikey kaydirma kilidi
+                  var startX = 0f
+                  var startY = 0f
+                  var isBlockingVertical = false
+                  val touchSlop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+
+                  webView.setOnTouchListener { v, event ->
+                      val url = webView.url ?: ""
+                      val isReelPage = url.contains("/reel/") || url.contains("/reels/")
+                      if (!isReelPage) {
+                          isBlockingVertical = false
+                          return@setOnTouchListener false
+                      }
+
+                      when (event.actionMasked) {
+                          android.view.MotionEvent.ACTION_DOWN -> {
+                              startX = event.x
+                              startY = event.y
+                              isBlockingVertical = false
+                              false
+                          }
+                          android.view.MotionEvent.ACTION_MOVE -> {
+                              if (isBlockingVertical) return@setOnTouchListener true
+                              val dx = kotlin.math.abs(event.x - startX)
+                              val dy = kotlin.math.abs(event.y - startY)
+                              if (dy > touchSlop && dy >= dx) {
+                                  isBlockingVertical = true
+                                  val cancel = android.view.MotionEvent.obtain(event).apply {
+                                      action = android.view.MotionEvent.ACTION_CANCEL
+                                  }
+                                  v.onTouchEvent(cancel)
+                                  cancel.recycle()
+                                  true
+                              } else {
+                                  false
+                              }
+                          }
+                          android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                              if (isBlockingVertical) {
+                                  isBlockingVertical = false
+                                  true
+                              } else {
+                                  false
+                              }
+                          }
+                          else -> false
+                      }
+                  }
 
                   rootContainer.addView(webView)
                   rootContainer.addView(timerBar)
